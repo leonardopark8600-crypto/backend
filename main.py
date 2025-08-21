@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # Servir frontend estático (si decides unirlos en un mismo server)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+#app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ---------- Helpers SBML ----------
