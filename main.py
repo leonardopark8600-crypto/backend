@@ -1,13 +1,19 @@
-from fastapi import FastAPI, UploadFile, File
+# main.py
+import io
+import json
+from typing import Dict, List, Optional
+
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
-import tellurium as te
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
 import libsbml
-import numpy as np
-from typing import Dict
+import tellurium as te
 
-app = FastAPI()
+app = FastAPI(title="SBML Simulator API")
 
-# Permitir CORS para frontend en GitHub Pages
+# CORS para que el frontend pueda llamar al API incluso si se sirve por separado
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,47 +22,147 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----------------------
-# Endpoint para inspección
-# ----------------------
-@app.post("/inspect")
-async def inspect_sbml(file: UploadFile = File(...)):
-    contents = await file.read()
+# Servir frontend estático (opcional)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+# ---------- Helpers SBML ----------
+def load_sbml_from_bytes(sbml_bytes: bytes):
     reader = libsbml.SBMLReader()
-    doc = reader.readSBMLFromString(contents.decode("utf-8"))
-    if doc.getNumErrors() > 0:
-        return {"error": "Archivo SBML inválido"}
-    model = doc.getModel()
+    doc = reader.readSBMLFromString(sbml_bytes.decode("utf-8", errors="ignore"))
+    if doc.getNumErrors() > 0 or doc.getModel() is None:
+        return None, "Error al leer el archivo SBML."
+    return doc, None
 
-    # Especies
-    species = [s.getId() for s in model.getListOfSpecies() if not s.getBoundaryCondition()]
-    # Parámetros globales
-    params = {p.getId(): p.getValue() for p in model.getListOfParameters()}
 
-    # Parámetros locales
+def extract_parameters(model: libsbml.Model) -> Dict[str, float]:
+    params = {}
+    # Global parameters
+    for p in model.getListOfParameters():
+        if p.isSetId():
+            params[p.getId()] = float(p.getValue())
+    # Local parameters inside reactions
     for r in model.getListOfReactions():
         if r.isSetKineticLaw():
-            for p in r.getKineticLaw().getListOfParameters():
-                params[f"{r.getId()}::{p.getId()}"] = p.getValue()
+            kl = r.getKineticLaw()
+            if hasattr(kl, "getListOfLocalParameters") and kl.getListOfLocalParameters() is not None:
+                for lp in kl.getListOfLocalParameters():
+                    key = f"{r.getId()}::{lp.getId()}"
+                    params[key] = float(lp.getValue())
+            if hasattr(kl, "getListOfParameters") and kl.getListOfParameters() is not None:
+                for lp in kl.getListOfParameters():
+                    key = f"{r.getId()}::{lp.getId()}"
+                    params[key] = float(lp.getValue())
+    return params
 
-    return {"species": species, "parameters": params}
 
-# ----------------------
-# Endpoint para simulación
-# ----------------------
+def extract_plot_species(model: libsbml.Model) -> Dict[str, str]:
+    species = {}
+    for s in model.getListOfSpecies():
+        if s.getBoundaryCondition():
+            continue
+        name = s.getName() if s.isSetName() and s.getName() else s.getId()
+        species[s.getId()] = name
+    return species
+
+
+def apply_params_to_sbml_doc(doc: libsbml.SBMLDocument, param_values: Dict[str, float]) -> libsbml.SBMLDocument:
+    model = doc.getModel()
+    for p in model.getListOfParameters():
+        pid = p.getId()
+        if pid in param_values:
+            try:
+                p.setValue(float(param_values[pid]))
+            except Exception:
+                pass
+    for r in model.getListOfReactions():
+        if r.isSetKineticLaw():
+            kl = r.getKineticLaw()
+            if hasattr(kl, "getListOfLocalParameters") and kl.getListOfLocalParameters() is not None:
+                for lp in kl.getListOfLocalParameters():
+                    key = f"{r.getId()}::{lp.getId()}"
+                    if key in param_values:
+                        try:
+                            lp.setValue(float(param_values[key]))
+                        except Exception:
+                            pass
+            if hasattr(kl, "getListOfParameters") and kl.getListOfParameters() is not None:
+                for lp in kl.getListOfParameters():
+                    key = f"{r.getId()}::{lp.getId()}"
+                    if key in param_values:
+                        try:
+                            lp.setValue(float(param_values[key]))
+                        except Exception:
+                            pass
+    return doc
+
+
+# ---------- API endpoints ----------
+@app.post("/inspect")
+async def inspect(file: UploadFile = File(...)):
+    sbml_bytes = await file.read()
+    doc, err = load_sbml_from_bytes(sbml_bytes)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
+
+    model = doc.getModel()
+    params = extract_parameters(model)
+    species = extract_plot_species(model)
+
+    return {
+        "parameters": params,
+        "species": species,
+        "defaultSelections": list(species.keys())
+    }
+
+
 @app.post("/simulate")
-async def simulate_sbml(
+async def simulate(
     file: UploadFile = File(...),
-    t_start: float = 0.0,
-    t_end: float = 50.0,
-    n_points: int = 200,
+    t_start: float = Form(0.0),
+    t_end: float = Form(50.0),
+    n_points: int = Form(200),
+    selected_species: str = Form(""),
+    param_values_json: Optional[str] = Form(None),
 ):
-    contents = await file.read()
-    rr = te.loadSBMLModel(contents.decode("utf-8"))
-    rr.setIntegrator("cvode")
-    rr.integrator.relative_tolerance = 1e-8
-    rr.integrator.absolute_tolerance = 1e-12
+    sbml_bytes = await file.read()
+    doc, err = load_sbml_from_bytes(sbml_bytes)
+    if err:
+        return JSONResponse(status_code=400, content={"error": err})
 
-    result = rr.simulate(t_start, t_end, int(n_points))
-    data = np.array(result)
-    return {"colnames": list(result.colnames), "data": data.tolist()}
+    param_values = {}
+    if param_values_json:
+        try:
+            param_values = json.loads(param_values_json)
+        except Exception:
+            return JSONResponse(status_code=400, content={"error": "param_values_json inválido"})
+
+    doc = apply_params_to_sbml_doc(doc, param_values)
+    sbml_str = libsbml.writeSBMLToString(doc)
+
+    try:
+        rr = te.loadSBMLModel(sbml_str)
+        rr.setIntegrator("cvode")
+        rr.integrator.relative_tolerance = 1e-8
+        rr.integrator.absolute_tolerance = 1e-12
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"No se pudo cargar el modelo en RoadRunner: {e}"})
+
+    species_ids = [s for s in selected_species.split(",") if s.strip()]
+    if not species_ids:
+        species_ids = list(extract_plot_species(doc.getModel()).keys())
+
+    rr.selections = ["time"] + [f"[{sid}]" for sid in species_ids]
+
+    try:
+        result = rr.simulate(t_start, t_end, int(n_points))
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"error": f"Error en la simulación: {e}"})
+
+    data = [list(map(float, row)) for row in result]
+    colnames = list(result.colnames)
+
+    return {
+        "columns": colnames,
+        "data": data
+    }
