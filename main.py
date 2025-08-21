@@ -13,7 +13,7 @@ import tellurium as te
 
 app = FastAPI(title="SBML Simulator API")
 
-# CORS para que el frontend pueda llamar al API incluso si se sirve por separado
+# CORS para permitir frontend separado
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,8 +22,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Servir frontend estático (opcional)
-# app.mount("/static", StaticFiles(directory="static"), name="static")
+# Servir frontend estático (si decides unirlos en un mismo server)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # ---------- Helpers SBML ----------
@@ -41,7 +41,7 @@ def extract_parameters(model: libsbml.Model) -> Dict[str, float]:
     for p in model.getListOfParameters():
         if p.isSetId():
             params[p.getId()] = float(p.getValue())
-    # Local parameters inside reactions
+    # Local parameters in reactions
     for r in model.getListOfReactions():
         if r.isSetKineticLaw():
             kl = r.getKineticLaw()
@@ -64,6 +64,19 @@ def extract_plot_species(model: libsbml.Model) -> Dict[str, str]:
         name = s.getName() if s.isSetName() and s.getName() else s.getId()
         species[s.getId()] = name
     return species
+
+
+def extract_reactions(model: libsbml.Model):
+    reactions = []
+    for r in model.getListOfReactions():
+        reactants = [s.getSpecies() for s in r.getListOfReactants()]
+        products = [s.getSpecies() for s in r.getListOfProducts()]
+        reactions.append({
+            "id": r.getId(),
+            "reactants": reactants,
+            "products": products
+        })
+    return reactions
 
 
 def apply_params_to_sbml_doc(doc: libsbml.SBMLDocument, param_values: Dict[str, float]) -> libsbml.SBMLDocument:
@@ -108,10 +121,12 @@ async def inspect(file: UploadFile = File(...)):
     model = doc.getModel()
     params = extract_parameters(model)
     species = extract_plot_species(model)
+    reactions = extract_reactions(model)
 
     return {
         "parameters": params,
         "species": species,
+        "reactions": reactions,
         "defaultSelections": list(species.keys())
     }
 
