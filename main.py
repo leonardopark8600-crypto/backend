@@ -79,6 +79,77 @@ async def inspect(file: UploadFile = File(...)):
         "initial_conditions": extract_initial_conditions(model),
         "defaultSelections": list(extract_plot_species(model).keys()),
     }
+    
+@app.get("/network")
+async def get_network():
+    global last_sbml_bytes
+    if last_sbml_bytes is None:
+        return JSONResponse(status_code=400, content={"error": "No se ha cargado ningún SBML aún."})
+
+    try:
+        # Cargar modelo
+        doc, err = load_sbml_from_bytes(last_sbml_bytes)
+        if err:
+            return JSONResponse(status_code=400, content={"error": err})
+
+        model = doc.getModel()
+        layout_plugin = model.getPlugin("layout")
+        if layout_plugin is None or layout_plugin.getNumLayouts() == 0:
+            return {"nodes": [], "edges": []}
+
+        layout = layout_plugin.getLayout(0)
+
+        nodes = []
+        edges = []
+
+        # Species con posiciones
+        for i in range(layout.getNumSpeciesGlyphs()):
+            sg = layout.getSpeciesGlyph(i)
+            sid = sg.getSpeciesId()
+            bbox = sg.getBoundingBox()
+            x = bbox.getX() if bbox else 0
+            y = bbox.getY() if bbox else 0
+            w = bbox.getWidth() if bbox else 50
+            h = bbox.getHeight() if bbox else 30
+            species = model.getSpecies(sid)
+            label = species.getName() if species and species.isSetName() else sid
+            nodes.append({
+                "data": {"id": sid, "label": label, "type": "metabolite"},
+                "position": {"x": x + w/2, "y": y + h/2}
+            })
+
+        # Reaction glyphs
+        for i in range(layout.getNumReactionGlyphs()):
+            rg = layout.getReactionGlyph(i)
+            rid = rg.getReactionId()
+            bbox = rg.getBoundingBox()
+            x = bbox.getX() if bbox else 0
+            y = bbox.getY() if bbox else 0
+            w = bbox.getWidth() if bbox else 40
+            h = bbox.getHeight() if bbox else 40
+            reaction = model.getReaction(rid)
+            label = reaction.getName() if reaction and reaction.isSetName() else rid
+            nodes.append({
+                "data": {"id": rid, "label": label, "type": "reaction"},
+                "position": {"x": x + w/2, "y": y + h/2}
+            })
+
+            # Edges (reactivos y productos)
+            for j in range(rg.getNumSpeciesReferenceGlyphs()):
+                srg = rg.getSpeciesReferenceGlyph(j)
+                ref = srg.getSpeciesGlyphId()
+                speciesGlyph = layout.getSpeciesGlyph(ref)
+                if speciesGlyph:
+                    sid = speciesGlyph.getSpeciesId()
+                    if srg.isSetRole() and srg.getRole() == libsbml.SPECIES_ROLE_PRODUCT:
+                        edges.append({"data": {"source": rid, "target": sid}})
+                    else:
+                        edges.append({"data": {"source": sid, "target": rid}})
+
+        return {"nodes": nodes, "edges": edges}
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.post("/simulate")
