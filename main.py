@@ -70,6 +70,37 @@ def extract_parameters(model: libsbml.Model) -> Dict[str, float]:
                         pass
     return params
 
+def extract_layout_positions(model: libsbml.Model):
+    """
+    Extrae posiciones de especies y reacciones si el SBML tiene Layout extension.
+    Devuelve {id: {"x": float, "y": float}}.
+    """
+    positions = {}
+    plugin = model.getPlugin("layout")
+    if not plugin:
+        return positions
+
+    if plugin.getNumLayouts() == 0:
+        return positions
+
+    layout = plugin.getLayout(0)  # tomamos el primer layout
+    for glyph in layout.getListOfSpeciesGlyphs():
+        sid = glyph.getSpeciesId()
+        if glyph.isSetBoundingBox():
+            bb = glyph.getBoundingBox()
+            if bb and bb.isSetPosition():
+                pos = bb.getPosition()
+                positions[sid] = {"x": pos.getX(), "y": pos.getY()}
+
+    for glyph in layout.getListOfReactionGlyphs():
+        rid = glyph.getReactionId()
+        if glyph.isSetBoundingBox():
+            bb = glyph.getBoundingBox()
+            if bb and bb.isSetPosition():
+                pos = bb.getPosition()
+                positions[rid] = {"x": pos.getX(), "y": pos.getY()}
+
+    return positions
 
 def extract_plot_species(model: libsbml.Model) -> Dict[str, str]:
     """
@@ -213,14 +244,17 @@ async def inspect(file: UploadFile = File(...)):
     species = extract_plot_species(model)
     reactions = extract_reactions(model)
     initial_conditions = extract_initial_conditions(model)
+    positions = extract_layout_positions(model)   # ← NUEVO
 
     return {
         "parameters": params,
         "species": species,
         "reactions": reactions,
         "initial_conditions": initial_conditions,
+        "positions": positions,   # ← NUEVO
         "defaultSelections": list(species.keys()),
     }
+
 
 
 @app.post("/simulate")
