@@ -1,15 +1,12 @@
 # main.py
 import io
 import json
-import pandas as pd
-import tempfile
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from optimize import load_experimental_data, optimize_params, load_sbml_from_string, extract_parameters, extract_plot_species
 
 import libsbml
 import tellurium as te
@@ -258,87 +255,7 @@ async def inspect(file: UploadFile = File(...)):
         "defaultSelections": list(species.keys()),
     }
 
-@app.post("/optimize")
-async def optimize(
-    file: UploadFile = File(...),
-    csv: UploadFile = File(...),
-    method: str = Form("least_squares"),
-    species_ids: str = Form(""),
-    param_ids: str = Form("")
-):
-    try:
-        # leer archivos
-        sbml_bytes = await file.read()
-        csv_bytes = await csv.read()
 
-        # guardar csv temporal
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp.write(csv_bytes)
-            csv_path = tmp.name
-
-        exp_data = load_experimental_data(csv_path)
-        sbml_str = sbml_bytes.decode("utf-8")
-
-        # especies seleccionadas
-        selected_species = [s for s in species_ids.split(",") if s.strip()]
-        if not selected_species:
-            selected_species = [c for c in exp_data.columns if c != "time"]
-
-        # parámetros seleccionados
-        selected_params = [p for p in param_ids.split(",") if p.strip()]
-        if not selected_params:
-            doc = load_sbml_from_string(sbml_str)
-            selected_params = list(extract_parameters(doc.getModel()).keys())
-
-        # correr optimización
-        result = optimize_params(
-            sbml_str,
-            exp_data,
-            selected_params,
-            t_start=float(exp_data["time"].min()),
-            t_end=float(exp_data["time"].max()),
-            n_points=len(exp_data),
-            species_ids=selected_species,
-            method=method
-        )
-
-        # simular con parámetros óptimos para devolver curva
-        sim = None
-        try:
-            import numpy as np
-            sim = te.loadSBMLModel(sbml_str)
-            for k,v in result["best_params"].items():
-                try:
-                    sim[k] = v
-                except:
-                    pass
-            sim.setIntegrator("cvode")
-            rr_res = sim.simulate(float(exp_data["time"].min()),
-                                  float(exp_data["time"].max()),
-                                  len(exp_data),
-                                  selections=["time"]+[f"[{s}]" for s in selected_species])
-            sim_data = [list(map(float,row)) for row in rr_res]
-            colnames = list(rr_res.colnames)
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": f"Simulación con parámetros óptimos falló: {e}"})
-
-        # preparar datos experimentales
-        exp_dict = {}
-        for s in selected_species:
-            if s in exp_data.columns:
-                exp_dict[s] = list(zip(exp_data["time"].tolist(), exp_data[s].tolist()))
-
-        return {
-            "method": result["method"],
-            "best_params": result["best_params"],
-            "cost": result["cost"],
-            "columns": colnames,
-            "simulation": sim_data,
-            "experimental": exp_dict
-        }
-
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.post("/simulate")
 async def simulate(
