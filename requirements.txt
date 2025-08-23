@@ -2,10 +2,14 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-libsbml==5.20.4
 tellurium==2.2.7
-numpy>=1.24.0
+
+# 👇 NumPy primero que Torch
+numpy==1.26.4
+pandas>=2.0.0
 matplotlib>=3.7.0
 python-multipart>=0.0.6
-pandas
+
+# PyTorch y librerías dependientes
 torch==2.2.2
 torchdiffeq
 
