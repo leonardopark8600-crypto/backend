@@ -103,7 +103,11 @@ def cost_function(param_values, sbml_str, param_names, exp_data: pd.DataFrame,
     sim = simulate_sbml(sbml_str, params, t_start, t_end, n_points, species_ids)
     # sim[:,0] = tiempo ; sim[:,1:] = especies
     sim_values = sim[:, 1:]
-    exp_interp = np.interp(sim[:, 0], exp_data["time"].values, exp_data[species_ids].values.T).T
+    # interpolar datos experimentales a los tiempos de simulación
+    exp_interp = np.array([
+        np.interp(sim[:, 0], exp_data["time"].values, exp_data[sp].values)
+        for sp in species_ids
+    ]).T
     return (sim_values - exp_interp).ravel()
 
 
@@ -114,7 +118,7 @@ def optimize_params(sbml_str: str, exp_data: pd.DataFrame,
                     species_ids: Optional[List[str]] = None,
                     method="least_squares"):
 
-    if species_ids is None:
+    if species_ids is None or len(species_ids) == 0:
         # usar todas las columnas excepto "time"
         species_ids = [c for c in exp_data.columns if c != "time"]
 
@@ -137,3 +141,4 @@ def optimize_params(sbml_str: str, exp_data: pd.DataFrame,
 
     else:
         raise ValueError(f"Método {method} no soportado")
+
