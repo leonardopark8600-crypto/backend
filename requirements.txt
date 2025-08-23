@@ -13,3 +13,7 @@ python-multipart>=0.0.6
 torch==2.2.2
 torchdiffeq
 
+# 🔹 Optimización
+scipy>=1.10.0
+
+
