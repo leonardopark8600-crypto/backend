@@ -3,9 +3,9 @@ import io
 import json
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile, Form,  WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import libsbml
@@ -24,7 +24,29 @@ app.add_middleware(
 
 # Servir frontend estático (si decides unirlos en un mismo server)
 # app.mount("/static", StaticFiles(directory="static"), name="static")
+connections = set()
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    connections.add(websocket)
+    await broadcast_count()
+
+    try:
+        while True:
+            await websocket.receive_text()  # mantenemos la conexión viva
+    except WebSocketDisconnect:
+        connections.remove(websocket)
+        await broadcast_count()
+
+async def broadcast_count():
+    count = len(connections)
+    for conn in connections:
+        await conn.send_json({"count": count})
+
+@app.get("/")
+def home():
+    return {"message": "Servidor de contador en línea activo 🚀"}
 
 # ---------- Helpers SBML ----------
 def load_sbml_from_bytes(sbml_bytes: bytes):
