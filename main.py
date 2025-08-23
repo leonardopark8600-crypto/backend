@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from optimize import load_experimental_data, optimize_params, load_sbml_from_string, extract_parameters, extract_plot_species
 
 import libsbml
 import tellurium as te
@@ -255,7 +256,30 @@ async def inspect(file: UploadFile = File(...)):
         "defaultSelections": list(species.keys()),
     }
 
+@app.post("/optimize")
+async def optimize(file: UploadFile = File(...),
+                   csv: UploadFile = File(...),
+                   method: str = Form("least_squares")):
+    sbml_bytes = await file.read()
+    csv_bytes = await csv.read()
 
+    # guardar csv temporal
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+        tmp.write(csv_bytes)
+        csv_path = tmp.name
+
+    exp_data = load_experimental_data(csv_path)
+
+    sbml_str = sbml_bytes.decode("utf-8")
+    doc = load_sbml_from_string(sbml_str)
+    param_names = list(extract_parameters(doc.getModel()).keys())
+    species_ids = list(extract_plot_species(doc.getModel()).keys())
+
+    result = optimize_params(sbml_str, exp_data, param_names,
+                             method=method, species_ids=species_ids)
+
+    return result
 
 @app.post("/simulate")
 async def simulate(
