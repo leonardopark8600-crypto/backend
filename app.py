@@ -6,7 +6,7 @@ import websocket_routes
 import sbml_routes
 import opt_addon.optimize_routes as optimize_routes
 
-# Crear instancia de FastAPI primero
+# Crear aplicación FastAPI primero
 app = FastAPI(title="SBML Simulator API")
 
 # Configurar CORS
@@ -22,9 +22,9 @@ app.add_middleware(
 # Registrar routers
 app.include_router(websocket_routes.router)
 app.include_router(sbml_routes.router)
-app.include_router(optimize_routes.router)
-
+app.include_router(optimize_routes.router)   # <- ya se registra correctamente
 
 @app.get("/")
 def home():
     return {"message": "Servidor de contador en línea activo 🚀"}
+
