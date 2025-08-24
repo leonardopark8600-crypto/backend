@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from config_settings import get_cors_config
 import websocket_routes
 import sbml_routes
+import opt_addon.optimize_routes as optimize_routes
+app.include_router(optimize_routes.router)
 
 app = FastAPI(title="SBML Simulator API")
 
