@@ -3,3 +3,11 @@ uvicorn
 python-libsbml
 tellurium
 python-multipart
+numpy
+scipy
+pandas
+sympy
+torch
+torchdiffeq
+scikit-learn
+
