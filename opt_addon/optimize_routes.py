@@ -7,7 +7,8 @@ from .optimize_service import (
 )
 from .data_repository import repo
 
-router = APIRouter(prefix="/opt", tags=["optimize"])
+# 👇 quitamos el prefix aquí
+router = APIRouter(tags=["optimize"])
 
 @router.post("/session/create")
 async def session_create(sbml_file: Optional[UploadFile] = File(None),
